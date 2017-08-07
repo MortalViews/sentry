@@ -26,19 +26,18 @@ const OnboardingWizard = React.createClass({
   },
 
   renderStep() {
+    let {projectName, platform} = this.state;
+
     const stepProps = {
       next: this.next,
-      platform: this.state.platform,
+      platform: platform,
       setPlatform: p => {
-        if (
-          !this.state.projectName ||
-          getPlatformName(this.state.platform) === this.state.projectName
-        ) {
+        if (!projectName || (platform && getPlatformName(platform) === projectName)) {
           this.setState({projectName: getPlatformName(p)});
         }
         this.setState({platform: p});
       },
-      name: this.state.projectName,
+      name: projectName,
       setName: n => this.setState({projectName: n})
     };
 
@@ -54,12 +53,19 @@ const OnboardingWizard = React.createClass({
   createProject() {
     let {orgId} = this.props.params;
     let {teams} = this.context.organization;
+    let {projectName, platform} = this.state;
+
+    if (!projectName) {
+      Raven.captureMessage('Onboarding no project name ', {
+        extra: {props: this.props, state: this.state}
+      });
+    }
 
     this.api.request(`/teams/${orgId}/${teams[0].slug}/projects/`, {
       method: 'POST',
       data: {
-        name: this.state.projectName,
-        platform: this.state.platform
+        name: projectName,
+        platform: platform
       },
       success: data => {
         data = {
@@ -76,7 +82,11 @@ const OnboardingWizard = React.createClass({
       },
       error: err => {
         Raven.captureMessage('Onboarding project creation failed', {
-          extra: err
+          extra: {
+            err,
+            props: this.props,
+            state: this.state
+          }
         });
 
         this.setState({
@@ -88,11 +98,7 @@ const OnboardingWizard = React.createClass({
   },
 
   next() {
-    if (this.context.organization) {
-      this.createProject();
-    } else {
-      browserHistory.push('another route');
-    }
+    this.createProject();
   },
 
   render() {

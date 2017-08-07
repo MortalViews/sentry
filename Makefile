@@ -3,7 +3,7 @@ MAKEFLAGS += --jobs=$(CPUS)
 NPM_ROOT = ./node_modules
 STATIC_DIR = src/sentry/static/sentry
 
-develop-only: update-submodules install-python install-yarn
+develop-only: update-submodules install-brew install-python install-yarn
 
 develop: setup-git develop-only
 	@echo ""
@@ -16,6 +16,9 @@ install-yarn:
 	# Fix phantomjs-prebuilt not installed via yarn
 	# See: https://github.com/karma-runner/karma-phantomjs-launcher/issues/120#issuecomment-262634703
 	node ./node_modules/phantomjs-prebuilt/install.js
+
+install-brew:
+	@hash brew 2> /dev/null && brew bundle || (echo '! Homebrew not found, skipping system dependencies.')
 
 install-python:
 	# must be executed serialially
@@ -123,7 +126,15 @@ test-python: build-platform-assets
 	py.test tests/integration tests/sentry || exit 1
 	@echo ""
 
-test-acceptance: build-platform-assets
+test-network:
+	@echo "--> Building platform assets"
+	sentry init
+	@echo "from sentry.utils.integrationdocs import sync_docs; sync_docs()" | sentry exec
+	@echo "--> Running network tests"
+	py.test tests/network
+	@echo ""
+
+test-acceptance:
 	@echo "--> Building static assets"
 	@${NPM_ROOT}/.bin/webpack
 	@echo "--> Running acceptance tests"
@@ -190,6 +201,7 @@ travis-install-mysql: travis-install-python
 	pip install mysqlclient
 	echo 'create database sentry;' | mysql -uroot
 travis-install-acceptance: install-yarn travis-install-postgres
+travis-install-network: travis-install-postgres
 travis-install-js:
 	$(MAKE) travis-upgrade-pip
 	$(MAKE) install-python install-yarn
@@ -208,6 +220,7 @@ travis-lint-sqlite: lint-python
 travis-lint-postgres: lint-python
 travis-lint-mysql: lint-python
 travis-lint-acceptance: travis-noop
+travis-lint-network: lint-python
 travis-lint-js: lint-js
 travis-lint-cli: travis-noop
 travis-lint-dist: travis-noop
@@ -222,6 +235,7 @@ travis-test-sqlite: test-python-coverage
 travis-test-postgres: test-python-coverage
 travis-test-mysql: test-python-coverage
 travis-test-acceptance: test-acceptance
+travis-test-network: test-network
 travis-test-js: test-js
 travis-test-cli: test-cli
 travis-test-dist:
