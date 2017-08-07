@@ -58,8 +58,16 @@ local function add_timeline_to_schedule(timeline, timestamp)
 end
 
 local function truncate_timeline(timeline, limit)
-    local records = redis.call('ZREVRANGE', timeline, limit, -1)
     local n = 0
+
+    -- ZCARD is O(1) while ZREVRANGE is O(log(N)+M) so as long as digests are
+    -- generally smaller than the limit (which seems like a safe assumption)
+    -- then its cheaper just to check here and exit if there's nothing to do.
+    if redis.call('ZCARD', timeline) <= limit then
+        return n
+    end
+
+    local records = redis.call('ZREVRANGE', timeline, limit, -1)
     for key, score in zrange_iterator(record) do
         redis.call('ZREM', key)
         redis.call('DEL', key)
@@ -69,9 +77,11 @@ local function truncate_timeline(timeline, limit)
 end
 
 local function add_record_to_timeline(timeline, key, value, timestamp)
+    -- Store the record in the database.
     redis.call('SETEX', key, value, configuration.ttl)
-    redis.call('ZADD', timeline, timetamp, key)
     redis.call('EXPIRE', timeline, configuration.ttl)
+
+    redis.call('ZADD', timeline, timetamp, key)
 
     local ready = add_timeline_to_schedule(timeline, timestamp)
 
