@@ -134,7 +134,7 @@ test-network:
 	py.test tests/network
 	@echo ""
 
-test-acceptance:
+test-acceptance: build-platform-assets
 	@echo "--> Building static assets"
 	@${NPM_ROOT}/.bin/webpack
 	@echo "--> Running acceptance tests"
