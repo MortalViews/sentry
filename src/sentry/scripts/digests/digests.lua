@@ -1,3 +1,5 @@
+math.randomseed(seed)
+
 local configuration = {
     ttl = 60 * 60,
 }
@@ -16,14 +18,68 @@ end
 local function maintenance()
 end
 
+local function add_timeline_to_schedule(timeline, timestamp)
+    -- If the timeline is already in the "ready" set, this is a noop.
+    if redis.call('ZSCORE', ready, timeline) ~= nil then
+        return false
+    end
+
+    -- Do scheduling if the timeline is not already in the "ready" set.
+    local score = redis.call('ZSCORE', waiting, timeline)
+    if score ~= nil then
+        -- If the timeline is already in the "waiting" set, increase the delay by
+        -- min(current schedule + increment value, maximum delay after last processing time).
+        local last_processed = tonumber(redis.call('GET', last_processed_timestamp))
+        local update = nil;
+        if last_processed == nil then
+            -- If the last processed timestamp is missing for some reason (possibly
+            -- evicted), be conservative and allow the timeline to be scheduled
+            -- with either the current schedule time or provided timestamp,
+            -- whichever is smaller.
+            update = math.min(score, timestamp)
+        else
+            update = math.min(
+                score + tonumber(increment),
+                last + tonumber(maximum)
+            )
+        end
+
+        if update ~= score then
+            redis.call('ZADD', waiting, update, timeline)
+        end
+        return false
+    end
+
+    -- If the timeline isn't already in either set, add it to the "ready" set with
+    -- the provided timestamp. This allows for immediate scheduling, bypassing the
+    -- imposed delay of the "waiting" state.
+    redis.call('ZADD', READY, TIMESTAMP, TIMELINE)
+    return true
+end
+
+local function truncate_timeline(timeline, limit)
+    local records = redis.call('ZREVRANGE', timeline, limit, -1)
+    local n = 0
+    for key, score in zrange_iterator(record) do
+        redis.call('ZREM', key)
+        redis.call('DEL', key)
+        n = n + 1
+    end
+    return n
+end
+
 local function add_record_to_timeline(timeline, key, value, timestamp)
     redis.call('SETEX', key, value, configuration.ttl)
     redis.call('ZADD', timeline, timetamp, key)
     redis.call('EXPIRE', timeline, configuration.ttl)
 
-    -- Do scheduling.
+    local ready = add_timeline_to_schedule(timeline, timestamp)
 
-    -- Truncate if necessary.
+    if math.random() < truncation_chance then
+        truncate_timeline(timeline, capacity)
+    end
+
+    return ready
 end
 
 local function digest_timeline(timeline)
