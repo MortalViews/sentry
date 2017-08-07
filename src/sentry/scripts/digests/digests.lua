@@ -4,7 +4,13 @@ local configuration = {
     ttl = 60 * 60,
 }
 
-local function zrange_iterator(result)
+function table.extend(t, items)
+    for _, item in ipairs(items) do
+        table.insert(t, item)
+    end
+end
+
+local function zrange_scored_iterator(result)
     local i = -1
     return function ()
         i = i + 2
@@ -12,10 +18,27 @@ local function zrange_iterator(result)
     end
 end
 
-local function schedule()
+local function schedule(deadline)
+    -- TODO: Maybe switch this over to ZSCAN to allow iterative processing?
+    local timelines = redis.call('ZRANGEBYSCORE', 0, deadline, 'WITHSCORES')
+
+    local remove = {}
+    local update = {}
+    local results = {}
+    for key, timestamp in zrange_scored_iterator(timelines) do
+        table.insert(remove, key)
+        table.extend(update, {timestamp, key})
+        table.extend(results, {key, timestamp})
+    end
+
+    redis.call('ZREM', waiting, unpack(remove))
+    redis.call('ZADD', ready, unpack(update))
+
+    return results
 end
 
-local function maintenance()
+local function maintenance(deadline)
+    error('not implemented')
 end
 
 local function add_timeline_to_schedule(timeline, timestamp)
@@ -68,7 +91,7 @@ local function truncate_timeline(timeline, limit)
     end
 
     local records = redis.call('ZREVRANGE', timeline, limit, -1)
-    for key, score in zrange_iterator(record) do
+    for _, key in ipairs(records) do
         redis.call('ZREM', key)
         redis.call('DEL', key)
         n = n + 1
@@ -108,24 +131,37 @@ local function digest_timeline(timeline)
     end
 
     local records = redis.call('ZREVRANGE', digest, 0, -1, 'WITHSCORES')
-    for key, score in zrange_iterator(records) do
+    for key, score in zrange_scored_iterator(records) do
+        error('return records')
     end
 
-    -- Return the records.
+    -- Return the records to the client.
+end
 
-    -- TODO: What should we do if there are records in the digest that weren't
-    -- at the beginning of this process? This can happen if locks were overrun
-    -- or broken. Leaving the extra records in the digest is only an issue if
-    -- we are removing the timeline from all schedules (which only happens if
-    -- we retrieved a digest without any records.) So, if there are new records
-    -- but no records in the timeline, allow the timeline to be added to the
-    -- ready set. If the other records end up being sent, they'll get deleted
-    -- and the timeline will subsequently get readded to the waiting set
-    -- anyway. If the other records end up /not/ being sent, they'll be
-    -- attempted to be sent on the next scheduled interval.
+local function close_digest(timeline, records)
+    -- Remove the records from the digest.
+    redis.call('ZREM', digest, unpack(records))
+    for _, record in ipairs(records) do
+        redis.call('DEL', record)
+    end
 
-    -- If there was data that resulted in a digest being sent: move it back to the ready set.
-    -- If there was no data that resulted in a digest being sent,
-    -- * If there are no timeline contents: remove it from the ready set (all sets).
-    -- * If there are timeline contents: move it to the ready set.
+    -- We always add to the ready set if we digested any number of records or
+    -- there are contents waiting to be delivered.
+    if #records > 0 or redis.call('ZCARD', timeline) > 0 or redis.call('ZCARD', digest) > 0 then
+        redis.call('SETEX', last_processed, configuration.ttl, value)
+        redis.call('ZREM', ready, timeline)
+        redis.call('ZADD', waiting, timestamp + minimum_delay, timeline)
+    else
+        redis.call('DEL', last_processed)
+        redis.call('ZREM', ready, timeline)
+        redis.call('ZREM', waiting, timeline)
+    end
+end
+
+local function delete_timeline(timeline)
+    truncate_timeline(timeline, 0)
+    truncate_timeline(digest, 0)
+    redis.call('DEL', last_processed)
+    redis.call('ZREM', ready, timeline)
+    redis.call('ZREM', waiting, timeline)
 end
