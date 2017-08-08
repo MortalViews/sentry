@@ -4,9 +4,10 @@ function table.extend(t, items)
     end
 end
 
-function table.slice(t, start, stop)
+function table.slice(t, ...)
+    local start, stop = ...
     if stop == nil then
-        stop = #stop
+        stop = #t
     end
     local result = {}
     for i = start, stop do
@@ -24,12 +25,16 @@ local function zrange_scored_iterator(result)
 end
 
 local function schedule(configuration, deadline)
+    local response = {}
+
     -- TODO: Maybe switch this over to ZSCAN to allow iterative processing?
     local timeline_ids = redis.call('ZRANGEBYSCORE', configuration:get_schedule_waiting_key(), 0, deadline, 'WITHSCORES')
+    if #timeline_ids == 0 then
+        return {}
+    end
 
     local zadd_args = {}
     local zrem_args = {}
-    local response = {}
     for timeline_id, timestamp in zrange_scored_iterator(timeline_ids) do
         table.insert(zrem_args, timeline_id)
         table.extend(zadd_args, {timestamp, timeline_id})
@@ -250,4 +255,4 @@ local commands = {
     end,
 }
 
-return commands[ARGV[1]](unpack(table.slice(ARGV, 2)))
+return commands[ARGV[1]](table.slice(ARGV, 2))
