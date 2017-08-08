@@ -4,6 +4,17 @@ function table.extend(t, items)
     end
 end
 
+function table.slice(t, start, stop)
+    if stop == nil then
+        stop = #stop
+    end
+    local result = {}
+    for i = start, stop do
+        table.insert(result, t[i])
+    end
+    return result
+end
+
 local function zrange_scored_iterator(result)
     local i = -1
     return function ()
@@ -12,23 +23,23 @@ local function zrange_scored_iterator(result)
     end
 end
 
-local function schedule(deadline)
+local function schedule(configuration, deadline)
     -- TODO: Maybe switch this over to ZSCAN to allow iterative processing?
-    local timelines = redis.call('ZRANGEBYSCORE', 0, deadline, 'WITHSCORES')
+    local timeline_ids = redis.call('ZRANGEBYSCORE', configuration:get_schedule_waiting_key(), 0, deadline, 'WITHSCORES')
 
-    local remove = {}
-    local update = {}
-    local results = {}
-    for key, timestamp in zrange_scored_iterator(timelines) do
-        table.insert(remove, key)
-        table.extend(update, {timestamp, key})
-        table.extend(results, {key, timestamp})
+    local zadd_args = {}
+    local zrem_args = {}
+    local response = {}
+    for timeline_id, timestamp in zrange_scored_iterator(timeline_ids) do
+        table.insert(zrem_args, timeline_id)
+        table.extend(zadd_args, {timestamp, timeline_id})
+        table.extend(response, {timeline_id, timestamp})
     end
 
-    redis.call('ZREM', waiting, unpack(remove))
-    redis.call('ZADD', ready, unpack(update))
+    redis.call('ZADD', configuration:get_schedule_ready_key(), unpack(zadd_args))
+    redis.call('ZREM', configuration:get_schedule_waiting_key(), unpack(zrem_args))
 
-    return results
+    return response
 end
 
 local function maintenance(deadline)
@@ -213,28 +224,30 @@ local function parse_arguments(arguments)
 end
 
 local commands = {
-    SCHEDULE = function (keys, arguments)
+    SCHEDULE = function (arguments)
         local configuration, arguments = parse_arguments(arguments)
-        error('not implemented')
+        return schedule(configuration, unpack(arguments))
     end,
-    MAINTENANCE = function (keys, arguments)
+    MAINTENANCE = function (arguments)
         local configuration, arguments = parse_arguments(arguments)
         error('not implemented')
     end
-    ADD = function (keys, arguments)
+    ADD = function (arguments)
         local configuration, arguments = parse_arguments(arguments)
         return add_record_to_timeline(configuration, unpack(arguments))
     end,
-    DELETE = function (keys, arguments)
+    DELETE = function (arguments)
         local configuration, arguments = parse_arguments(arguments)
         return delete_timeline(configuration, unpack(arguments))
     end,
-    DIGEST_OPEN = function (keys, arguments)
+    DIGEST_OPEN = function (arguments)
         local configuration, arguments = parse_arguments(arguments)
         return digest_timeline(configuration, unpack(arguments))
     end,
-    DIGEST_CLOSE = function (keys, arguments)
+    DIGEST_CLOSE = function (arguments)
         local configuration, arguments = parse_arguments(arguments)
         return close_digest(configuration, unpack(arguments))
     end,
 }
+
+return commands[ARGV[1]](unpack(table.slice(ARGV, 2)))
