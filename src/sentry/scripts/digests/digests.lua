@@ -103,8 +103,8 @@ local function truncate_timeline(configuration, timeline_id, timeline_capacity)
     -- ZCARD is O(1) while ZREVRANGE is O(log(N)+M) so as long as digests are
     -- generally smaller than the limit (which seems like a safe assumption)
     -- then its cheaper just to check here and exit if there's nothing to do.
-    local timeline_key = configuration:get_timeline_key(timeline)
-    if redis.call('ZCARD', timeline_key) <= limit then
+    local timeline_key = configuration:get_timeline_key(timeline_id)
+    if redis.call('ZCARD', timeline_key) <= timeline_capacity then
         return n
     end
 
@@ -124,8 +124,10 @@ local function add_record_to_timeline(configuration, timeline_id, record_id, val
 
     local ready = add_timeline_to_schedule(configuration, timeline_id, timestamp, delay_increment, delay_maximum)
 
-    if math.random() < truncation_chance then
-        truncate_timeline(configuration, timeline_id, timeline_capacity)
+    -- TODO: `tonumber` should happen upstream
+    if math.random() < tonumber(truncation_chance) then
+        -- TODO: `tonumber` should happen upstream
+        truncate_timeline(configuration, timeline_id, tonumber(timeline_capacity))
     end
 
     return ready
