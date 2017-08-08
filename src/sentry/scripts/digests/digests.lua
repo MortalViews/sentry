@@ -1,5 +1,3 @@
-math.randomseed(seed)
-
 function table.extend(t, items)
     for _, item in ipairs(items) do
         table.insert(t, item)
