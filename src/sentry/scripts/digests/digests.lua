@@ -165,9 +165,9 @@ local function digest_timeline(configuration, timeline_id)
         -- If the digest set already exists (possibly because we already tried
         -- to send it and failed for some reason), merge any new data into it.
         redis.call('ZUNIONSTORE', digest_key, 2, timeline_key, digest_key, 'AGGREGATE', 'MAX')
-        redis.call('DELETE', timeline_key)
+        redis.call('DEL', timeline_key)
         redis.call('EXPIRE', digest_key, configuration.ttl)
-    else
+    elseif redis.call('EXISTS', timeline_key) == 1 then
         -- Otherwise, we can just move the timeline contents to the digest key.
         redis.call('RENAME', timeline_key, digest_key)
         redis.call('EXPIRE', digest_key, configuration.ttl)
@@ -182,15 +182,17 @@ local function digest_timeline(configuration, timeline_id)
     return results
 end
 
-local function close_digest(configuration, timeline_id, record_ids, delay_minimum)
+local function close_digest(configuration, delay_minimum, timeline_id, ...)
+    local record_ids = {...}
     local timeline_key = configuration:get_timeline_key(timeline_id)
     local digest_key = configuration:get_timeline_digest_key(timeline_id)
 
-    redis.call('ZREM', digest_key, unpack(record_ids))
-
-    for _, record_id in ipairs(record_ids) do
-        -- TODO: This could technically be called as a variadic instead, if it mattered.
-        redis.call('DEL', configuration:get_timeline_record_key(timeline_id, record_id))
+    if #record_ids > 0 then
+        redis.call('ZREM', digest_key, unpack(record_ids))
+        for _, record_id in ipairs(record_ids) do
+            -- TODO: This could technically be called as a variadic instead, if it mattered.
+            redis.call('DEL', configuration:get_timeline_record_key(timeline_id, record_id))
+        end
     end
 
     -- We always add to the ready set if we digested any number of records or
@@ -215,10 +217,11 @@ local function delete_timeline(configuration, timeline_id)
 end
 
 local function parse_arguments(arguments)
+    -- TODO: These need validation!
     local configuration = {
-        namespace = 'd',
-        ttl = 60 * 60,
-        timestamp = 0,   -- TODO: fill in
+        namespace = arguments[1],
+        ttl = tonumber(arguments[2]),
+        timestamp = tonumber(arguments[3]),
     }
 
     math.randomseed(configuration.timestamp)
@@ -247,7 +250,7 @@ local function parse_arguments(arguments)
         return string.format('%s:t:%s:r:%s', self.namespace, timeline_id, record_id)
     end
 
-    return configuration, arguments
+    return configuration, table.slice(arguments, 4)
 end
 
 local commands = {
