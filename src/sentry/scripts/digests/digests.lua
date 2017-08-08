@@ -76,36 +76,8 @@ local function add_timeline_to_schedule(configuration, timeline_id, timestamp, i
         return false
     end
 
-    -- Do scheduling if the timeline is not already in the "ready" set.
     local score = redis.call('ZSCORE', configuration:get_schedule_waiting_key(), timeline_id)
-    if score ~= false then
-        -- If the timeline is already in the "waiting" set, increase the delay by
-        -- min(current schedule + increment value, maximum delay after last processing time).
-        local last_processed = tonumber(redis.call('GET', configuration:get_timeline_last_processed_timestamp_key(timeline_id)))
-        local update = nil;
-        if last_processed == nil then
-            -- If the last processed timestamp is missing for some reason
-            -- (possibly evicted), be conservative and allow the timeline to be
-            -- scheduled with either the current schedule time or provided
-            -- timestamp, whichever is smaller.
-            update = math.min(score, timestamp)
-        else
-            update = math.min(
-                score + increment,
-                last_processed + maximum
-            )
-        end
-
-        if update ~= score then
-            -- This should technically be ZADD XX for correctness (this item
-            -- should always exist, and we established that above) but not
-            -- using that here doesn't break anything and allows use to use
-            -- older Redis versions.
-            redis.call('ZADD', configuration:get_schedule_waiting_key(), update, timeline_id)
-        end
-
-        return false
-    else
+    if score == false then
         -- If the timeline isn't already in either set, add it to the "ready" set with
         -- the provided timestamp. This allows for immediate scheduling, bypassing the
         -- imposed delay of the "waiting" state. (This should also be ZADD NX, but
@@ -114,7 +86,33 @@ local function add_timeline_to_schedule(configuration, timeline_id, timestamp, i
         return true
     end
 
-    error('unexpected fallthrough')
+    -- If the timeline is already in the "waiting" set, increase the delay by
+    -- min(current schedule + increment value, maximum delay after last
+    -- processing time).
+    local last_processed = tonumber(redis.call('GET', configuration:get_timeline_last_processed_timestamp_key(timeline_id)))
+    local update = nil;
+    if last_processed == nil then
+        -- If the last processed timestamp is missing for some reason (possibly
+        -- evicted), be conservative and allow the timeline to be scheduled
+        -- with either the current schedule time or provided timestamp,
+        -- whichever is smaller.
+        update = math.min(score, timestamp)
+    else
+        update = math.min(
+            score + increment,
+            last_processed + maximum
+        )
+    end
+
+    if update ~= score then
+        -- This should technically be ZADD XX for correctness (this item
+        -- should always exist, and we established that above) but not
+        -- using that here doesn't break anything and allows use to use
+        -- older Redis versions.
+        redis.call('ZADD', configuration:get_schedule_waiting_key(), update, timeline_id)
+    end
+
+    return false
 end
 
 local function trim_sorted_set(key, capacity, callback)
