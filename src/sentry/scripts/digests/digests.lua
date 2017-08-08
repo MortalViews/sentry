@@ -187,8 +187,9 @@ local function close_digest(configuration, timeline_id, record_ids, delay_minimu
 end
 
 local function delete_timeline(configuration, timeline_id)
-    truncate_timeline(timeline, 0)
-    truncate_timeline(digest, 0)
+    truncate_timeline(configuration, timeline_id, 0)
+    -- TODO: fix me
+    -- truncate_timeline(configuration, digest, 0)
     redis.call('DEL', configuration:get_timeline_last_processed_timestamp_key(timeline_id))
     redis.call('ZREM', configuration:get_schedule_ready_key(), timeline_id)
     redis.call('ZREM', configuration:get_schedule_waiting_key(), timeline_id)
