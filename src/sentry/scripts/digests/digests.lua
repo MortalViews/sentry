@@ -47,8 +47,25 @@ local function schedule(configuration, deadline)
     return response
 end
 
-local function maintenance(deadline)
-    error('not implemented')
+local function maintenance(configuration, deadline)
+    local response = {}
+
+    local timeline_ids = redis.call('ZRANGEBYSCORE', configuration:get_schedule_ready_key(), 0, deadline, 'WITHSCORES')
+    if #timeline_ids == 0 then
+        return {}
+    end
+
+    local zadd_args = {}
+    local zrem_args = {}
+    for timeline_id, timestamp in zrange_scored_iterator(timeline_ids) do
+        table.insert(zrem_args, timeline_id)
+        table.extend(zadd_args, {timestamp, timeline_id})
+    end
+
+    redis.call('ZADD', configuration:get_schedule_waiting_key(), unpack(zadd_args))
+    redis.call('ZREM', configuration:get_schedule_ready_key(), unpack(zrem_args))
+
+    return #timeline_ids
 end
 
 local function add_timeline_to_schedule(configuration, timeline_id, timestamp, increment, maximum)
@@ -260,7 +277,7 @@ local commands = {
     end,
     MAINTENANCE = function (arguments)
         local configuration, arguments = parse_arguments(arguments)
-        error('not implemented')
+        return maintenance(configuration, unpack(arguments))
     end,
     ADD = function (arguments)
         local configuration, arguments = parse_arguments(arguments)
