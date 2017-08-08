@@ -72,13 +72,13 @@ end
 
 local function add_timeline_to_schedule(configuration, timeline_id, timestamp, increment, maximum)
     -- If the timeline is already in the "ready" set, this is a noop.
-    if redis.call('ZSCORE', configuration:get_schedule_ready_key(), timeline_id) ~= nil then
+    if redis.call('ZSCORE', configuration:get_schedule_ready_key(), timeline_id) ~= false then
         return false
     end
 
     -- Do scheduling if the timeline is not already in the "ready" set.
     local score = redis.call('ZSCORE', configuration:get_schedule_waiting_key(), timeline_id)
-    if score ~= nil then
+    if score ~= false then
         -- If the timeline is already in the "waiting" set, increase the delay by
         -- min(current schedule + increment value, maximum delay after last processing time).
         local last_processed = tonumber(redis.call('GET', configuration:get_timeline_last_processed_timestamp_key(timeline_id)))
@@ -105,15 +105,16 @@ local function add_timeline_to_schedule(configuration, timeline_id, timestamp, i
         end
 
         return false
+    else
+        -- If the timeline isn't already in either set, add it to the "ready" set with
+        -- the provided timestamp. This allows for immediate scheduling, bypassing the
+        -- imposed delay of the "waiting" state. (This should also be ZADD NX, but
+        -- like above, this allows us to still work with older Redis.)
+        redis.call('ZADD', configuration:get_schedule_ready_key(), timestamp, timeline_id)
+        return true
     end
 
-    -- If the timeline isn't already in either set, add it to the "ready" set with
-    -- the provided timestamp. This allows for immediate scheduling, bypassing the
-    -- imposed delay of the "waiting" state. (This should also be ZADD NX, but
-    -- like above, this allows us to still work with older Redis.)
-    redis.call('ZADD', configuration:get_schedule_ready_key(), timestamp, timeline_id)
-
-    return true
+    error('unexpected fallthrough')
 end
 
 local function trim_sorted_set(key, capacity, callback)
@@ -174,7 +175,7 @@ end
 
 local function digest_timeline(configuration, timeline_id)
     -- Check to ensure that the timeline is in the correct state.
-    if redis.call('ZSCORE', configuration:get_schedule_ready_key(), timeline_id) == nil then
+    if redis.call('ZSCORE', configuration:get_schedule_ready_key(), timeline_id) == false then
         error('timeline is not in the ready state, cannot be digested')
     end
 
