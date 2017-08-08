@@ -27,7 +27,7 @@ end
 local function zrange_move_slice(source, destination, threshold, callback)
     local callback = callback
     if callback == nil then
-        callback = function (key, score) do
+        callback = function (key, score)
             return
         end
     end
