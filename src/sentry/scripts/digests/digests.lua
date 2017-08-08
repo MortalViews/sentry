@@ -231,7 +231,7 @@ local commands = {
     MAINTENANCE = function (arguments)
         local configuration, arguments = parse_arguments(arguments)
         error('not implemented')
-    end
+    end,
     ADD = function (arguments)
         local configuration, arguments = parse_arguments(arguments)
         return add_record_to_timeline(configuration, unpack(arguments))
