@@ -16,6 +16,10 @@ function table.slice(t, ...)
     return result
 end
 
+local noop = function ()
+    return
+end
+
 local function zrange_scored_iterator(result)
     local i = -1
     return function ()
@@ -27,9 +31,7 @@ end
 local function zrange_move_slice(source, destination, threshold, callback)
     local callback = callback
     if callback == nil then
-        callback = function (key, score)
-            return
-        end
+        callback = noop
     end
 
     local keys = redis.call('ZRANGEBYSCORE', source, 0, threshold, 'WITHSCORES')
@@ -47,6 +49,31 @@ local function zrange_move_slice(source, destination, threshold, callback)
 
     redis.call('ZADD', destination, unpack(zadd_args))
     redis.call('ZREM', source, unpack(zrem_args))
+end
+
+local function zset_trim(key, capacity, callback)
+    local callback = callback
+    if callback == nil then
+        callback = noop
+    end
+
+    local n = 0
+
+    -- ZCARD is O(1) while ZREVRANGE is O(log(N)+M) so as long as the set is
+    -- generally smaller than the limit (which seems like a safe assumption)
+    -- then its cheaper just to check here and exit if there's nothing to do.
+    if redis.call('ZCARD', key) <= capacity then
+        return n
+    end
+
+    local items = redis.call('ZREVRANGE', key, limit, -1)
+    for _, item in ipairs(items) do
+        redis.call('ZREM', key, item)
+        callback(item)
+        n = n + 1
+    end
+
+    return n
 end
 
 local function schedule(configuration, deadline)
@@ -115,28 +142,8 @@ local function add_timeline_to_schedule(configuration, timeline_id, timestamp, i
     return false
 end
 
-local function trim_sorted_set(key, capacity, callback)
-    local n = 0
-
-    -- ZCARD is O(1) while ZREVRANGE is O(log(N)+M) so as long as the set is
-    -- generally smaller than the limit (which seems like a safe assumption)
-    -- then its cheaper just to check here and exit if there's nothing to do.
-    if redis.call('ZCARD', key) <= capacity then
-        return n
-    end
-
-    local items = redis.call('ZREVRANGE', key, limit, -1)
-    for _, item in ipairs(items) do
-        redis.call('ZREM', key, item)
-        callback(item)
-        n = n + 1
-    end
-
-    return n
-end
-
 local function truncate_timeline(configuration, timeline_id, capacity)
-    return trim_sorted_set(
+    return zset_trim(
         configuration:get_timeline_key(timeline_id),
         capacity,
         function (record_id)
@@ -146,7 +153,7 @@ local function truncate_timeline(configuration, timeline_id, capacity)
 end
 
 local function truncate_digest(configuration, timeline_id, capacity)
-    return trim_sorted_set(
+    return zset_trim(
         configuration:get_timeline_digest_key(timeline_id),
         capacity,
         function (record_id)
