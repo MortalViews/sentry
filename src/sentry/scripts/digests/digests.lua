@@ -24,48 +24,50 @@ local function zrange_scored_iterator(result)
     end
 end
 
-local function schedule(configuration, deadline)
-    local response = {}
+local function zrange_move_slice(source, destination, threshold, callback)
+    local callback = callback
+    if callback == nil then
+        callback = function (key, score) do
+            return
+        end
+    end
 
-    -- TODO: Maybe switch this over to ZSCAN to allow iterative processing?
-    local timeline_ids = redis.call('ZRANGEBYSCORE', configuration:get_schedule_waiting_key(), 0, deadline, 'WITHSCORES')
-    if #timeline_ids == 0 then
-        return {}
+    local keys = redis.call('ZRANGEBYSCORE', source, 0, threshold, 'WITHSCORES')
+    if #keys == 0 then
+        return
     end
 
     local zadd_args = {}
     local zrem_args = {}
-    for timeline_id, timestamp in zrange_scored_iterator(timeline_ids) do
-        table.insert(zrem_args, timeline_id)
-        table.extend(zadd_args, {timestamp, timeline_id})
-        table.extend(response, {timeline_id, timestamp})
+    for key, score in zrange_scored_iterator(keys) do
+        table.insert(zrem_args, key)
+        table.extend(zadd_args, {score, key})
+        callback(key, score)
     end
 
-    redis.call('ZADD', configuration:get_schedule_ready_key(), unpack(zadd_args))
-    redis.call('ZREM', configuration:get_schedule_waiting_key(), unpack(zrem_args))
+    redis.call('ZADD', destination, unpack(zadd_args))
+    redis.call('ZREM', source, unpack(zrem_args))
+end
 
+local function schedule(configuration, deadline)
+    local response = {}
+    zrange_move_slice(
+        configuration:get_schedule_waiting_key(),
+        configuration:get_schedule_ready_key(),
+        deadline,
+        function (timeline_id, timestamp)
+            table.extend(response, {timeline_id, timestamp})
+        end
+    )
     return response
 end
 
 local function maintenance(configuration, deadline)
-    local response = {}
-
-    local timeline_ids = redis.call('ZRANGEBYSCORE', configuration:get_schedule_ready_key(), 0, deadline, 'WITHSCORES')
-    if #timeline_ids == 0 then
-        return {}
-    end
-
-    local zadd_args = {}
-    local zrem_args = {}
-    for timeline_id, timestamp in zrange_scored_iterator(timeline_ids) do
-        table.insert(zrem_args, timeline_id)
-        table.extend(zadd_args, {timestamp, timeline_id})
-    end
-
-    redis.call('ZADD', configuration:get_schedule_waiting_key(), unpack(zadd_args))
-    redis.call('ZREM', configuration:get_schedule_ready_key(), unpack(zrem_args))
-
-    return #timeline_ids
+    zrange_move_slice(
+        configuration:get_schedule_ready_key(),
+        configuration:get_schedule_waiting_key(),
+        deadline
+    )
 end
 
 local function add_timeline_to_schedule(configuration, timeline_id, timestamp, increment, maximum)
