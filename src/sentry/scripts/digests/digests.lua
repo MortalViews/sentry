@@ -1,9 +1,5 @@
 math.randomseed(seed)
 
-local configuration = {
-    ttl = 60 * 60,
-}
-
 function table.extend(t, items)
     for _, item in ipairs(items) do
         table.insert(t, item)
@@ -158,10 +154,71 @@ local function close_digest(timeline, records)
     end
 end
 
-local function delete_timeline(timeline)
+local function delete_timeline(configuration, timeline_id)
     truncate_timeline(timeline, 0)
     truncate_timeline(digest, 0)
-    redis.call('DEL', last_processed)
-    redis.call('ZREM', ready, timeline)
-    redis.call('ZREM', waiting, timeline)
+    redis.call('DEL', configuration:get_timeline_last_processed_timestamp_key(timeline_id))
+    redis.call('ZREM', configuration:get_schedule_ready_key(), timeline_id)
+    redis.call('ZREM', configuration:get_schedule_waiting_key(), timeline_id)
 end
+
+local function parse_arguments(arguments)
+    -- TODO: fill in
+    local configuration = {
+        namespace = 'd',
+        ttl = 60 * 60,
+    }
+
+    function configuration:get_schedule_waiting_key()
+        return string.format('%s:s:w', self.namespace)
+    end
+
+    function configuration:get_schedule_ready_key()
+        return string.format('%s:s:r', self.namespace)
+    end
+
+    function configuration:get_timeline_key(timeline_id)
+        return string.format('%s:t:%s', self.namespace, timeline_id)
+    end
+
+    function configuration:get_timeline_digest_key(timeline_id)
+        return string.format('%s:t:%s:d', self.namespace, timeline_id)
+    end
+
+    function configuration:get_timeline_last_processed_timestamp_key(timeline_id)
+        return string.format('%s:t:%s:l', self.namespace, timeline_id)
+    end
+
+    function configuration:get_timeline_record_key(timeline_id, record_id)
+        return string.format('%s:t:%s:r:%s', self.namespace, timeline_id, record_id)
+    end
+
+    return configuration, arguments
+end
+
+local commands = {
+    SCHEDULE = function (keys, arguments)
+        local configuration, arguments = parse_arguments(arguments)
+        error('not implemented')
+    end,
+    MAINTENANCE = function (keys, arguments)
+        local configuration, arguments = parse_arguments(arguments)
+        error('not implemented')
+    end
+    ADD = function (keys, arguments)
+        local configuration, arguments = parse_arguments(arguments)
+        error('not implemented')
+    end,
+    DELETE = function (keys, arguments)
+        local configuration, arguments = parse_arguments(arguments)
+        error('not implemented')
+    end,
+    DIGEST_OPEN = function (keys, arguments)
+        local configuration, arguments = parse_arguments(arguments)
+        error('not implemented')
+    end,
+    DIGEST_CLOSE = function (keys, arguments)
+        local configuration, arguments = parse_arguments(arguments)
+        error('not implemented')
+    end,
+}
