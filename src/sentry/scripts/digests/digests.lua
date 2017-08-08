@@ -97,24 +97,44 @@ local function add_timeline_to_schedule(configuration, timeline_id, timestamp, i
     return true
 end
 
-local function truncate_timeline(configuration, timeline_id, timeline_capacity)
+local function trim_sorted_set(key, capacity, callback)
     local n = 0
 
-    -- ZCARD is O(1) while ZREVRANGE is O(log(N)+M) so as long as digests are
+    -- ZCARD is O(1) while ZREVRANGE is O(log(N)+M) so as long as the set is
     -- generally smaller than the limit (which seems like a safe assumption)
     -- then its cheaper just to check here and exit if there's nothing to do.
-    local timeline_key = configuration:get_timeline_key(timeline_id)
-    if redis.call('ZCARD', timeline_key) <= timeline_capacity then
+    if redis.call('ZCARD', key) <= capacity then
         return n
     end
 
-    local records = redis.call('ZREVRANGE', timeline_key, timeline_capacity, -1)
-    for _, record_id in ipairs(records) do
-        redis.call('ZREM', timeline_key, record_id)
-        redis.call('DEL', configuration:get_timeline_record_key(timeline_id, record_id))
+    local items = redis.call('ZREVRANGE', key, limit, -1)
+    for _, item in ipairs(items) do
+        redis.call('ZREM', key, item)
+        callback(item)
         n = n + 1
     end
+
     return n
+end
+
+local function truncate_timeline(configuration, timeline_id, capacity)
+    return trim_sorted_set(
+        configuration:get_timeline_key(timeline_id),
+        capacity,
+        function (record_id)
+            redis.call('DEL', configuration:get_timeline_record_key(timeline_id, record_id))
+        end
+    )
+end
+
+local function truncate_digest(configuration, timeline_id, capacity)
+    return trim_sorted_set(
+        configuration:get_timeline_digest_key(timeline_id),
+        capacity,
+        function (record_id)
+            redis.call('DEL', configuration:get_timeline_record_key(timeline_id, record_id))
+        end
+    )
 end
 
 local function add_record_to_timeline(configuration, timeline_id, record_id, value, timestamp, delay_increment, delay_maximum, timeline_capacity, truncation_chance)
@@ -188,8 +208,7 @@ end
 
 local function delete_timeline(configuration, timeline_id)
     truncate_timeline(configuration, timeline_id, 0)
-    -- TODO: fix me
-    -- truncate_timeline(configuration, digest, 0)
+    truncate_digest(configuration, timeline_id, 0)
     redis.call('DEL', configuration:get_timeline_last_processed_timestamp_key(timeline_id))
     redis.call('ZREM', configuration:get_schedule_ready_key(), timeline_id)
     redis.call('ZREM', configuration:get_schedule_waiting_key(), timeline_id)
